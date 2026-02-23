@@ -105,10 +105,22 @@ class Game {
         this._calDotY = y;
         this._calProgress = 0;
 
+        // SDK 좌표 → 현재 viewport 기준으로 클램핑
+        // SeeSo SDK는 내부 기준 해상도(PC) 좌표를 반환하므로
+        // 모바일에서는 그대로 쓰면 화면 밖으로 나감
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const dotSize = 60;
+        // 화면 안에 완전히 들어오도록 클램핑 (패딩 20px)
+        const clampedX = Math.min(Math.max(x, dotSize / 2 + 20), W - dotSize / 2 - 20);
+        const clampedY = Math.min(Math.max(y, dotSize / 2 + 20), H - dotSize / 2 - 20);
+
+        MemoryLogger.info('CAL', `NextPoint raw(${Math.round(x)},${Math.round(y)}) → clamped(${Math.round(clampedX)},${Math.round(clampedY)}) viewport=${W}x${H}`);
+
         const dot = document.getElementById('cal-dot');
         if (dot) {
-            dot.style.left = (x - 30) + 'px';
-            dot.style.top = (y - 30) + 'px';
+            dot.style.left = (clampedX - dotSize / 2) + 'px';
+            dot.style.top = (clampedY - dotSize / 2) + 'px';
             dot.style.display = 'block';
             // 반짝이는 애니메이션 재시작
             dot.classList.remove('pulse');
@@ -117,7 +129,7 @@ class Game {
         }
 
         document.getElementById('status-text').textContent =
-            `🎯 이 점을 바라봐 주세요 (${Math.round(x)}, ${Math.round(y)})`;
+            `🎯 이 점을 바라봐 주세요 (${Math.round(clampedX)}, ${Math.round(clampedY)})`;
     }
 
     _onCalibrationProgress(progress) {
