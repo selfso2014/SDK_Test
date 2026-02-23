@@ -196,6 +196,10 @@ class Game {
     async showQuiz() {
         if (!this.currentPassage) return;
 
+        // [FIX-MEM] READING → QUIZ 전환: text train DOM 즉시 해제
+        // (다음 _renderTextTrain()까지 기다리지 않고 즉시 GC에게 반납)
+        this._destroyTextTrain();
+
         // 시선 데이터 통계 로깅
         if (this._gCount > 0) {
             const lastIdx = (this._gIdx - 1 + MAX_GAZE_ENTRIES) % MAX_GAZE_ENTRIES;
@@ -354,6 +358,24 @@ class Game {
     }
 
     // ── 텍스트 트레인 ────────────────────────────────────────────
+
+    // [FIX-MEM] Text Train 즉시 해제 — READING 종료 시 호출.
+    // 이전: _renderTextTrain()이 다음 지문 시작 시 innerHTML='' 했음
+    //       → QUIZ 화면에 있는 동안 .text-line div가 DOM에 잔류.
+    // 이후: READING → QUIZ 전환 즉시 container 비움 → GC에게 즉시 반납.
+    _destroyTextTrain() {
+        MemoryLogger.snapshot('BEFORE_DESTROY_TEXT_TRAIN');
+        const container = document.getElementById('reading-text');
+        if (container) container.innerHTML = '';
+        const lineCount = this._trainLines.length;
+        this._trainLines = [];
+        this._trainReady = false;
+        this._trainCurrentLine = -1;
+        MemoryLogger.info('GAME',
+            `[FIX-MEM] _destroyTextTrain: removed ${lineCount} .text-line divs`);
+        MemoryLogger.snapshot('AFTER_DESTROY_TEXT_TRAIN');
+    }
+
     // 텍스트를 단어 span으로 임시 렌더 → offsetTop으로 라인 감지
     // → 라인 div로 재구성 → gaze Y 기반 fade-out
     _renderTextTrain(text) {
