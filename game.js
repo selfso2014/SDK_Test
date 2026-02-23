@@ -172,7 +172,9 @@ class Game {
         if (!this.currentPassage) return;
 
         await this.setState('QUIZ');
-        this._gazeActive = true;
+        // 퀴즈 화면에서는 gaze dot 불필요 → RAF 중지 (iOS 메모리 절약)
+        this._gazeActive = false;
+        this._stopGazeDot();
 
         document.getElementById('quiz-question').textContent = this.currentPassage.question;
 
@@ -257,13 +259,20 @@ class Game {
         const canvas = document.getElementById('gaze-canvas');
         if (!canvas) return;
 
+        // ⚠️ iOS 크래시 핵심 수정:
+        // canvas.width/height를 매 프레임 설정하면 GPU 버퍼가 매번 재할당됨
+        // → 60fps * 수십초 = 수천 번의 GPU 메모리 재할당 → iOS WebKit 프로세스 킬
+        // 해결: 시작 시 1회만 설정, 이후 clearRect만 사용
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        const ctx = canvas.getContext('2d');
+        MemoryLogger.info('GAME', `GazeDot start: canvas=${canvas.width}x${canvas.height}`);
+
         const draw = () => {
             if (!this._gazeActive) return;
             this._gazeDotRafId = requestAnimationFrame(draw);
 
-            const ctx = canvas.getContext('2d');
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            // GPU 버퍼 재할당 없이 지우기만 수행 (iOS 안전)
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             if (this._gazeX != null && this._gazeY != null &&
