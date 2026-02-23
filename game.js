@@ -110,7 +110,7 @@ class Game {
         // 모바일에서는 그대로 쓰면 화면 밖으로 나감
         const W = window.innerWidth;
         const H = window.innerHeight;
-        const dotSize = 60;
+        const dotSize = 12; // 12px = 60px의 20%
         // 화면 안에 완전히 들어오도록 클램핑 (패딩 20px)
         const clampedX = Math.min(Math.max(x, dotSize / 2 + 20), W - dotSize / 2 - 20);
         const clampedY = Math.min(Math.max(y, dotSize / 2 + 20), H - dotSize / 2 - 20);
