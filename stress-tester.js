@@ -18,7 +18,7 @@
 
 const MemoryStressTester = (() => {
     const CHUNK_MB = 10;    // 한 번에 할당할 크기 (MB)
-    const OBSERVE_SEC = 5;     // 레벨당 관찰 시간 (초)
+    const OBSERVE_SEC = 3;     // 레벨당 관찰 시간 (초)
     const MAX_LEVEL = 30;    // 최대 300MB (안전 상한)
 
     const BYTES_PER_MB = 1024 * 1024;
