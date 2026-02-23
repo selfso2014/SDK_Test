@@ -7,8 +7,7 @@
  */
 
 // 시선 데이터 롤링 버퍼 최대 크기: 60s @ 30Hz
-const MAX_GAZE_ENTRIES = 1800;
-
+const MAX_GAZE_ENTRIES = 1800; // 60s @ 30Hz
 
 class Game {
     constructor() {
@@ -24,8 +23,13 @@ class Game {
         this._gazeY = null;
         this._gazeActive = false;    // gaze dot 표시 여부
 
-        // ── 시선 데이터 버퍼 ({x, y, t} 롤링) ─────────────────
-        this._gazeData = [];         // 최대 MAX_GAZE_ENTRIES 유지
+        // ── 시선 데이터 버퍼 — TypedArray 순환버퍼 (할당 1회, GC 없음) ─────
+        // push/shift 없이 인덱스만 순환 → 30Hz GC 압박 뭐
+        this._gx = new Float32Array(MAX_GAZE_ENTRIES); // x 코오디네이트 (px)
+        this._gy = new Float32Array(MAX_GAZE_ENTRIES); // y 코오디네이트 (px)
+        this._gt = new Float64Array(MAX_GAZE_ENTRIES); // timestamp (unix ms)
+        this._gIdx = 0;    // 다음 쓰기 위치
+        this._gCount = 0;    // 실제 저장된 수
 
         // ── 텍스트 트레인 상태 ──────────────────────────────────
         this._trainLines = [];       // [HTMLElement] 라인 div 목록
@@ -171,8 +175,9 @@ class Game {
             return;
         }
 
-        // 새 지문 시작 → 시선 데이터 초기화
-        this._gazeData = [];
+        // 새 지문 시작 → 시선 버퍼 인덱스 리셋 (TypedArray 데이터는 그대로 유지)
+        this._gIdx = 0;
+        this._gCount = 0;
         this._trainLines = [];
         this._trainCurrentLine = -1;
         this._trainReady = false;
@@ -192,13 +197,14 @@ class Game {
         if (!this.currentPassage) return;
 
         // 시선 데이터 통계 로깅
-        if (this._gazeData.length > 0) {
-            const first = this._gazeData[0].t;
-            const last = this._gazeData[this._gazeData.length - 1].t;
-            const durSec = ((last - first) / 1000).toFixed(1);
-            const hz = (this._gazeData.length / Math.max(1, (last - first) / 1000)).toFixed(1);
+        if (this._gCount > 0) {
+            const lastIdx = (this._gIdx - 1 + MAX_GAZE_ENTRIES) % MAX_GAZE_ENTRIES;
+            const firstIdx = this._gCount < MAX_GAZE_ENTRIES ? 0 : this._gIdx;
+            const durMs = this._gt[lastIdx] - this._gt[firstIdx];
+            const durSec = (durMs / 1000).toFixed(1);
+            const hz = (this._gCount / Math.max(1, durMs / 1000)).toFixed(1);
             MemoryLogger.info('GAZE',
-                `Reading stats: entries=${this._gazeData.length} ` +
+                `Reading stats: entries=${this._gCount} ` +
                 `dur=${durSec}s avg_hz=${hz} ` +
                 `passage=${this.currentPassage.id}`
             );
@@ -282,13 +288,12 @@ class Game {
 
         // READING 상태에서만 데이터 수집 + 텍스트 트레인 업데이트
         if (this.state === 'READING') {
-            // {x, y, t} 롤링 버퍼
-            this._gazeData.push({
-                x: Math.round(gazeInfo.x),
-                y: Math.round(gazeInfo.y),
-                t: Date.now()
-            });
-            if (this._gazeData.length > MAX_GAZE_ENTRIES) this._gazeData.shift();
+            // TypedArray 순환버퍼에 쓰기 (GC 없음)
+            this._gx[this._gIdx] = gazeInfo.x;
+            this._gy[this._gIdx] = gazeInfo.y;
+            this._gt[this._gIdx] = Date.now();
+            this._gIdx = (this._gIdx + 1) % MAX_GAZE_ENTRIES;
+            if (this._gCount < MAX_GAZE_ENTRIES) this._gCount++;
 
             // 텍스트 트레인 업데이트
             if (this._trainReady) this._updateTextTrain(gazeInfo.y);
