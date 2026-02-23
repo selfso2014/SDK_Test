@@ -239,6 +239,14 @@
                         return ok;
                     }
 
+                    startCollectSamples() {
+                        this.seeso.startCollectSamples();
+                    }
+
+                    stopCalibration() {
+                        return this.seeso.stopCalibration();
+                    }
+
                     deinit() {
                         if (this._onGazeBind) this.seeso.removeGazeCallback(this._onGazeBind);
                         if (this._onCalFinBind) this.seeso.removeCalibrationFinishCallback(this._onCalFinBind);

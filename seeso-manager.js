@@ -161,6 +161,14 @@ class SeesoManager {
             (x, y) => {
                 MemoryLogger.info('CAL', `Next point: (${x.toFixed(0)}, ${y.toFixed(0)})`);
                 if (onNextPoint) onNextPoint(x, y);
+                // ⚠️ startCollectSamples() 필수: 이 호출이 없으면 progress가 0%에서 멈춤
+                // onNextPoint 콜백 직후 SDK에 데이터 수집 시작을 명시적으로 지시해야 함
+                try {
+                    this._seeso.startCollectSamples();
+                    MemoryLogger.info('CAL', 'startCollectSamples() called ✅');
+                } catch (e) {
+                    MemoryLogger.error('CAL', 'startCollectSamples() failed', { msg: e.message });
+                }
             },
             (progress) => {
                 if (onProgress) onProgress(progress);
