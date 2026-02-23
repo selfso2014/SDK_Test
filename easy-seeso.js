@@ -1,4 +1,4 @@
-import Seeso, {InitializationErrorType, CalibrationAccuracyCriteria} from './dist/seeso';
+import Seeso, { InitializationErrorType, CalibrationAccuracyCriteria } from './dist/seeso';
 
 class EasySeeso {
   constructor() {
@@ -20,7 +20,7 @@ class EasySeeso {
   }
 
   async init(licenseKey, afterInitialized, afterFailed, userStatusOption) {
-    await this.seeso.initialize(licenseKey, userStatusOption).then(function(errCode) {
+    await this.seeso.initialize(licenseKey, userStatusOption).then(function (errCode) {
       if (errCode === InitializationErrorType.ERROR_NONE) {
         afterInitialized();
         this.onCalibrationFinishedBind = this.onCalibrationFinished_.bind(this);
@@ -42,7 +42,27 @@ class EasySeeso {
   }
 
   async startTracking(onGaze, onDebug) {
-    const stream = await navigator.mediaDevices.getUserMedia({'video': true});
+    // [FIX-iOS] 전면 카메라 + 해상도 제한 (iPhone 후면 카메라 / 12MP 방지)
+    // {'video': true}는 iOS에서 후면 카메라 or 최대 해상도 → WASM 검은 프레임
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const videoConstraints = isIOS ? {
+      facingMode: { ideal: 'user' },   // 전면 카메라 우선 (eye tracking 필수)
+      width: { ideal: 640, max: 1280 }, // 해상도 제한 → WASM 처리 가능
+      height: { ideal: 480, max: 720 },
+      frameRate: { max: 30 }             // 30fps 이하 제한
+    } : { facingMode: 'user' };          // PC도 전면 카메라 명시
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+
+    // [FIX-iOS] SDK video element에 playsinline 강제 추가
+    // playsinline 없으면 iOS Safari가 fullscreen 시도 → grabFrame 검은 프레임
+    if (isIOS) {
+      stream.getVideoTracks().forEach(track => {
+        const settings = track.getSettings();
+        console.log('[EasySeeso] Camera:', settings.facingMode, settings.width + 'x' + settings.height, settings.frameRate + 'fps');
+      });
+    }
+
     this.seeso.addDebugCallback(onDebug);
     if (this.seeso.startTracking(stream)) {
       this.onGaze = onGaze;
@@ -54,6 +74,7 @@ class EasySeeso {
     }
   }
 
+
   stopTracking() {
     this.seeso.stopTracking();
     this.seeso.removeDebugCallback(this.onDebug);
@@ -61,21 +82,21 @@ class EasySeeso {
     this.onDebug = null;
   }
 
-  setFaceCallback(onFace){
+  setFaceCallback(onFace) {
     this.seeso.addFaceCallback(onFace);
     this.onFace = onFace;
   }
-  
-  removeFaceCallbck(onFace){
+
+  removeFaceCallbck(onFace) {
     this.seeso.removeFaceCallbck(onFace);
   }
 
   setScreenSize(widthMm, heightMm) {
-    if(widthMm && widthMm > 0 && heightMm && heightMm > 0){
-      this.seeso.setScreenSize(widthMm,heightMm)
+    if (widthMm && widthMm > 0 && heightMm && heightMm > 0) {
+      this.seeso.setScreenSize(widthMm, heightMm)
     }
   }
-  
+
   setUserStatusCallback(onAttention, onBlink, onDrowsiness) {
     this.seeso.addAttentionCallback(onAttention);
     this.seeso.addBlinkCallback(onBlink);
@@ -91,7 +112,7 @@ class EasySeeso {
     this.seeso.removeDrowsinessCallback(this.onDrowsiness);
   }
 
-  startCalibration(onCalibrationNextPoint, onCalibrationProgress, onCalibrationFinished, calibrationPoints=5) {
+  startCalibration(onCalibrationNextPoint, onCalibrationProgress, onCalibrationFinished, calibrationPoints = 5) {
     this.seeso.addCalibrationNextPointCallback(onCalibrationNextPoint);
     this.seeso.addCalibrationProgressCallback(onCalibrationProgress);
     const isStart = this.seeso.startCalibration(calibrationPoints, CalibrationAccuracyCriteria.Default);
@@ -150,15 +171,15 @@ class EasySeeso {
     this.seeso.setCameraPosition(cameraX, cameraOnTop);
   }
 
-  setCameraConfiguration(cameraConfig){
+  setCameraConfiguration(cameraConfig) {
     this.seeso.setCameraConfiguration(cameraConfig)
   }
 
-  getCameraConfiguration(){
+  getCameraConfiguration() {
     this.seeso.getCameraConfiguration()
   }
 
-  getCameraPosition () {
+  getCameraPosition() {
     return this.seeso.getCameraPosition();
   }
 
@@ -166,7 +187,7 @@ class EasySeeso {
     return this.seeso.getFaceDistance();
   }
 
-  getMonitorSize () {
+  getMonitorSize() {
     return this.seeso.getMonitorSize();
   }
 
@@ -190,7 +211,7 @@ class EasySeeso {
     return this.seeso.getAttentionScore();
   }
 
-  static getVersionName () {
+  static getVersionName() {
     return Seeso.getVersionName();
   }
   /**

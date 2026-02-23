@@ -238,7 +238,21 @@
                     }
 
                     async startTracking(onGaze, onDebug) {
-                        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                        // [FIX-iOS] easy-seeso.js와 동일한 수정
+                        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                        const videoConstraints = isIOS ? {
+                            facingMode: { ideal: 'user' },
+                            width: { ideal: 640, max: 1280 },
+                            height: { ideal: 480, max: 720 },
+                            frameRate: { max: 30 }
+                        } : { facingMode: 'user' };
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+                        if (isIOS) {
+                            stream.getVideoTracks().forEach(t => {
+                                const s = t.getSettings();
+                                MemoryLogger.info('EasySeeso', `[iOS] cam: ${s.facingMode} ${s.width}x${s.height} ${s.frameRate}fps`);
+                            });
+                        }
                         this.seeso.addDebugCallback(onDebug);
                         if (this.seeso.startTracking(stream)) {
                             this.onGaze = onGaze; this.onDebug = onDebug;
