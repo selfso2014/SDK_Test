@@ -90,20 +90,35 @@ class Game {
             return;
         }
 
-        // SDK 완료 → 시선 추적 시작
-        // easy-seeso.js 공식 방식: startTracking(onGaze, onDebug) 2인자
-        // 내부에서 getUserMedia + 카메라 권한 요청을 처리함
+        // [FIX-iOS] startTracking을 await → 카메라 스트림이 실제 준비된 후 캘리브레이션 진입
+        // 이전: 즉시 반환 → 카메라 첫 프레임이 검게 보임 (iPhone 11 재현)
         document.getElementById('status-text').textContent = '📷 카메라 권한을 허용해주세요...';
-        this.seesoMgr.startTracking(
+        const trackOk = await this.seesoMgr.startTracking(
             (gazeInfo) => this._onGaze(gazeInfo),
             (fps) => this._onDebug(fps)
         );
 
-        // tracking은 비동기 → 캘리브레이션 화면 바로 이동
+        if (!trackOk) {
+            document.getElementById('status-text').textContent = '❌ 카메라 시작 실패. 권한을 확인해 주세요.';
+            document.getElementById('btn-retry').style.display = 'block';
+            return;
+        }
+
+        // [FIX-iOS] 카메라 워밍업 대기
+        // iPhone 카메라는 스트림 시작 후 auto-exposure 안정화까지 0.5~1.5초 필요
+        // 이 시간 내에 startCalibration하면 SDK가 검은 프레임을 처리 → 캘리브레이션 불량
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (isIOS) {
+            MemoryLogger.info('GAME', '[iOS] 800ms camera warm-up...');
+            document.getElementById('status-text').textContent = '📸 카메라 준비 중...';
+            await new Promise(r => setTimeout(r, 800));
+        }
+
         await this.setState('CALIBRATION');
         document.getElementById('status-text').textContent = '🎯 화면 중앙의 점을 바라봐 주세요';
         this._startCalibrationUI();
     }
+
 
     // ── 캘리브레이션 UI ──────────────────────────────────────────
     _startCalibrationUI() {

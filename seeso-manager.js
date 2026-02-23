@@ -107,9 +107,10 @@ class SeesoManager {
     }
 
     // ── 2단계: 시선 추적 시작 ────────────────────────────────────
-    // easy-seeso.js 공식 방식: startTracking(onGaze, onDebug)
-    // 내부에서 getUserMedia() 호출 → stream은 SDK가 직접 관리
-    startTracking(onGaze, onDebug) {
+    // async → await 가능: 카메라가 실제로 준비된 후 resolve
+    // [FIX-iOS] 이전: 즉시 true 반환 → startCalibration이 카메라 준비 전 호출 → 검은 프레임
+    // [FIX-iOS] 이후: Promise 반환 → caller가 await → 카메라 ready 보장
+    async startTracking(onGaze, onDebug) {
         if (!this._seeso || !this._initialized) {
             MemoryLogger.error('TRACK', 'startTracking: SDK not initialized');
             return false;
@@ -122,7 +123,6 @@ class SeesoManager {
 
         this._onDebug = (fps, latMin, latMax, latAvg) => {
             MemoryLogger.info('SDK_DBG', `FPS=${fps} lat(min=${latMin} max=${latMax} avg=${typeof latAvg?.toFixed === 'function' ? latAvg.toFixed(1) : latAvg}ms)`);
-            // gaze Hz 헤더 업데이트
             const el = document.getElementById('gaze-fps');
             if (el) el.textContent = fps;
             if (onDebug) onDebug(fps, latMin, latMax, latAvg);
@@ -131,20 +131,20 @@ class SeesoManager {
         this._setState('tracking', 'starting');
         MemoryLogger.snapshot('TRACKING_START');
 
-        // 공식 방법: 2인자 (stream 전달 없음)
-        this._seeso.startTracking(this._onGaze, this._onDebug)
-            .then((ok) => {
-                MemoryLogger.info('TRACK', `startTracking returned: ${ok}`);
-                this._tracking = ok;
-                this._setState('tracking', ok ? 'running' : 'failed');
-                if (ok) MemoryLogger.snapshot('TRACKING_RUNNING');
-            })
-            .catch((e) => {
-                MemoryLogger.error('TRACK', 'startTracking threw', { msg: e?.message, stack: e?.stack });
-                this._setState('tracking', 'failed');
-            });
-
-        return true;
+        try {
+            // 공식 방법: 2인자 (stream 전달 없음)
+            // Promise를 await → 카메라 스트림이 실제로 시작될 때까지 대기
+            const ok = await this._seeso.startTracking(this._onGaze, this._onDebug);
+            MemoryLogger.info('TRACK', `startTracking resolved: ${ok}`);
+            this._tracking = ok;
+            this._setState('tracking', ok ? 'running' : 'failed');
+            if (ok) MemoryLogger.snapshot('TRACKING_RUNNING');
+            return ok;
+        } catch (e) {
+            MemoryLogger.error('TRACK', 'startTracking threw', { msg: e?.message, stack: e?.stack });
+            this._setState('tracking', 'failed');
+            return false;
+        }
     }
 
     // ── 3단계: 1포인트 캘리브레이션 ─────────────────────────────
