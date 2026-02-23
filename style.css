@@ -1,0 +1,436 @@
+/* style.css — SeeSo Reading Game Debug */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+
+/* ── Reset & Base ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --surface2: #21262d;
+  --border:   #30363d;
+  --accent:   #58a6ff;
+  --accent2:  #a371f7;
+  --success:  #3fb950;
+  --danger:   #f85149;
+  --warn:     #d29922;
+  --text:     #c9d1d9;
+  --text-dim: #8b949e;
+  --radius:   12px;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+/* ── Layout ───────────────────────────────────────── */
+#app {
+  position: relative;
+  width: 100%; height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ── Game Sections ────────────────────────────────── */
+.game-section {
+  display: none;
+  width: 100%; height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+  overflow-y: auto;
+  animation: fadeIn 0.35s ease;
+}
+.game-section.active { display: flex; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Header Bar ───────────────────────────────────── */
+#header-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 48px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 500;
+}
+#header-bar h1 {
+  font-size: 14px;
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+#header-stats {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 12px;
+}
+#header-stats span { display: flex; align-items: center; gap: 4px; }
+
+/* 모든 섹션 상단 여백 확보 */
+.game-section { padding-top: 64px; }
+
+/* ── Status Text ──────────────────────────────────── */
+#status-text {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(22,27,34,0.92);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  z-index: 400;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── Buttons ──────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 28px;
+  border: none;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(88,166,255,0.3);
+}
+.btn-primary:hover   { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(88,166,255,0.45); }
+.btn-primary:active  { transform: translateY(0); }
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: #2d333b; }
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ── Card ────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  width: 100%;
+  max-width: 680px;
+}
+
+/* ── IDLE Section ─────────────────────────────────── */
+#section-idle {
+  gap: 24px;
+  text-align: center;
+}
+.idle-logo {
+  font-size: 56px;
+  margin-bottom: 4px;
+}
+.idle-title {
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.idle-subtitle {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin-top: 4px;
+}
+.idle-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 8px;
+}
+.badge {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.idle-desc {
+  font-size: 14px;
+  color: var(--text-dim);
+  max-width: 420px;
+  line-height: 1.8;
+}
+
+/* ── Loading Section ──────────────────────────────── */
+#section-loading {
+  gap: 20px;
+  text-align: center;
+}
+.loading-spinner {
+  width: 56px;
+  height: 56px;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-label {
+  font-size: 18px;
+  font-weight: 600;
+}
+.loading-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+  max-width: 320px;
+}
+
+/* ── Calibration Section ──────────────────────────── */
+#section-calibration {
+  position: relative;
+  background: #000;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+}
+
+#cal-instruction {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  z-index: 10;
+}
+#cal-instruction h2 { font-size: 18px; color: #fff; margin-bottom: 6px; }
+#cal-instruction p  { font-size: 13px; color: #aaa; }
+
+/* 진행률 바 */
+#cal-progress-wrap {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  text-align: center;
+  z-index: 10;
+}
+#cal-progress-track {
+  height: 6px;
+  background: #222;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+#cal-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 3px;
+  transition: width 0.1s ease;
+}
+#cal-progress-text { font-size: 12px; color: #666; }
+
+/* 캘리브레이션 포인트 dot */
+#cal-dot {
+  position: fixed;
+  display: none;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff 0%, var(--accent) 50%, var(--accent2) 100%);
+  box-shadow: 0 0 30px rgba(88,166,255,0.8), 0 0 60px rgba(163,113,247,0.4);
+  z-index: 100;
+  pointer-events: none;
+}
+#cal-dot.pulse {
+  animation: calPulse 1.2s ease-in-out infinite;
+}
+@keyframes calPulse {
+  0%   { transform: scale(1);    box-shadow: 0 0 30px rgba(88,166,255,0.8); }
+  50%  { transform: scale(1.18); box-shadow: 0 0 50px rgba(88,166,255,1.0), 0 0 80px rgba(163,113,247,0.6); }
+  100% { transform: scale(1);    box-shadow: 0 0 30px rgba(88,166,255,0.8); }
+}
+
+/* ── Reading Section ──────────────────────────────── */
+#section-reading {
+  gap: 20px;
+  align-items: stretch;
+}
+#reading-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  text-align: center;
+}
+#reading-text-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 100%;
+  max-width: 680px;
+  align-self: center;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+#reading-text {
+  font-size: 16px;
+  line-height: 1.95;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
+.reading-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* ── Quiz Section ─────────────────────────────────── */
+#section-quiz {
+  gap: 20px;
+  align-items: stretch;
+}
+#quiz-question-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  max-width: 680px;
+  width: 100%;
+  align-self: center;
+}
+#quiz-question {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--text);
+}
+#quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 680px;
+  width: 100%;
+  align-self: center;
+}
+.option-btn {
+  width: 100%;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.option-btn:hover:not(:disabled) {
+  background: var(--surface2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.option-btn.correct {
+  background: rgba(63,185,80,0.15);
+  border-color: var(--success);
+  color: var(--success);
+}
+.option-btn.wrong {
+  background: rgba(248,81,73,0.12);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.option-btn:disabled { cursor: default; }
+
+/* ── Result Section ───────────────────────────────── */
+#section-result {
+  gap: 20px;
+  text-align: center;
+}
+.result-emoji  { font-size: 64px; }
+.result-title  { font-size: 24px; font-weight: 700; }
+#result-score  {
+  font-size: 48px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--success));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+#result-msg    { font-size: 17px; color: var(--text-dim); }
+.result-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+/* ── Gaze Canvas (overlay) ────────────────────────── */
+#gaze-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 200;
+}
+
+/* ── Retry Button ─────────────────────────────────── */
+#btn-retry {
+  display: none;
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+}
+
+/* ── Scrollbar ────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Responsive ───────────────────────────────────── */
+@media (max-width: 480px) {
+  .idle-title  { font-size: 22px; }
+  .card        { padding: 18px; }
+  #reading-text { font-size: 15px; }
+  .option-btn  { font-size: 14px; padding: 12px 14px; }
+}

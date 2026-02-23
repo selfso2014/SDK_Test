@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>SeeSo Reading Game – Debug</title>
+  <meta name="description" content="SeeSo Eye Tracking 기반 리딩 게임 (iPhone 크래시 디버그용)" />
+
+  <!-- ── Cross-Origin Isolation (SharedArrayBuffer for WASM threads) ── -->
+  <!-- 배포 서버에서는 COOP / COEP 헤더로 처리해야 함. 로컬 fallback: coi-serviceworker.js -->
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Header Bar ───────────────────────────────── -->
+  <div id="header-bar">
+    <h1>👁️ SeeSo Reading Game <span style="font-size:10px;color:#555;font-weight:400;">[DEBUG]</span></h1>
+    <div id="header-stats">
+      <span>Gaze: <b id="gaze-fps">0</b> Hz</span>
+      <span>
+        <button
+          id="btn-download-log"
+          style="background:#1a1a3a;color:#88aaff;border:1px solid #334;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;"
+        >📥 로그 저장</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- ── Section: IDLE (시작 화면) ─────────────────── -->
+  <section id="section-idle" class="game-section active">
+    <div class="idle-logo">📖</div>
+    <div class="idle-title">SeeSo 리딩 게임</div>
+    <div class="idle-subtitle">Eye Tracking Reading Test · Debug Build</div>
+
+    <div class="idle-badges">
+      <span class="badge">👁️ 1-Point Calibration</span>
+      <span class="badge">📊 Memory Monitor</span>
+      <span class="badge">🍎 iOS Debug Mode</span>
+    </div>
+
+    <p class="idle-desc">
+      시선 추적 기술을 이용하여 지문을 읽고 문제를 풀어보세요.<br />
+      카메라 권한과 HTTPS 환경이 필요합니다.
+    </p>
+
+    <div style="margin-top:8px;">
+      <button id="btn-start" class="btn btn-primary">
+        🚀 게임 시작
+      </button>
+    </div>
+  </section>
+
+  <!-- ── Section: LOADING (SDK 초기화 / 카메라) ──── -->
+  <section id="section-loading" class="game-section">
+    <div class="loading-spinner"></div>
+    <div class="loading-label">잠시만 기다려 주세요</div>
+    <div class="loading-hint">AI 모델을 다운로드하는 중입니다.<br />첫 실행 시 네트워크 속도에 따라 30초까지 걸릴 수 있습니다.</div>
+  </section>
+
+  <!-- ── Section: CALIBRATION ─────────────────────── -->
+  <section id="section-calibration" class="game-section">
+    <!-- 지시 메시지 -->
+    <div id="cal-instruction">
+      <h2>🎯 시선 캘리브레이션</h2>
+      <p>화면에 나타나는 점을 응시해 주세요</p>
+    </div>
+
+    <!-- 진행률 바 -->
+    <div id="cal-progress-wrap">
+      <div id="cal-progress-track">
+        <div id="cal-progress-bar"></div>
+      </div>
+      <div id="cal-progress-text">0%</div>
+    </div>
+
+    <!-- 캘리브레이션 포인트 -->
+    <div id="cal-dot"></div>
+  </section>
+
+  <!-- ── Section: READING (지문 읽기) ─────────────── -->
+  <section id="section-reading" class="game-section">
+    <h2 id="reading-title" style="font-size:20px;font-weight:700;color:#58a6ff;text-align:center;"></h2>
+
+    <div id="reading-text-wrap">
+      <p id="reading-text"></p>
+    </div>
+
+    <div class="reading-actions">
+      <button id="btn-go-quiz" class="btn btn-primary">
+        다 읽었어요 → 문제 풀기
+      </button>
+    </div>
+  </section>
+
+  <!-- ── Section: QUIZ (문제 풀기) ────────────────── -->
+  <section id="section-quiz" class="game-section">
+    <div id="quiz-question-wrap">
+      <p id="quiz-question"></p>
+    </div>
+    <div id="quiz-options"></div>
+  </section>
+
+  <!-- ── Section: RESULT (결과) ───────────────────── -->
+  <section id="section-result" class="game-section">
+    <div class="result-emoji">🏆</div>
+    <div class="result-title">게임 완료!</div>
+    <div id="result-score">0 / 0</div>
+    <div id="result-msg"></div>
+    <div class="result-actions" style="margin-top:16px;">
+      <button id="btn-play-again" class="btn btn-primary">🔄 다시하기</button>
+      <button id="btn-download-log-result" class="btn btn-secondary"
+              onclick="MemoryLogger.downloadLogs()">📥 로그 저장</button>
+    </div>
+  </section>
+
+  <!-- ── Gaze Dot Overlay Canvas ───────────────────── -->
+  <canvas id="gaze-canvas"></canvas>
+
+  <!-- ── 재시도 버튼 (에러 시) ─────────────────────── -->
+  <button id="btn-retry" class="btn btn-danger">🔄 다시 시도</button>
+
+  <!-- ── Status Bar ────────────────────────────────── -->
+  <div id="status-text">준비 중...</div>
+
+</div><!-- /#app -->
+
+<!-- ────────────── Scripts ────────────────────────── -->
+<!--
+  로드 순서:
+  1. memory-logger.js   ← 가장 먼저 (에러 캐치 준비)
+  2. easy-seeso.js      ← SeeSo SDK 래퍼
+  3. passage-data.js    ← 게임 콘텐츠
+  4. seeso-manager.js   ← SDK 매니저 (EasySeeso 의존)
+  5. game.js            ← 게임 로직 (위 모두 의존)
+-->
+<script src="memory-logger.js"></script>
+<script type="module">
+  // SeeSo SDK는 ES Module로 export
+  import EasySeeso from './easy-seeso.js';
+  window.EasySeeso = EasySeeso;
+
+  // SDK 로드 완료 후 나머지 스크립트 동적 로드
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.body.appendChild(s);
+    });
+  }
+
+  (async () => {
+    try {
+      await loadScript('passage-data.js');
+      await loadScript('seeso-manager.js');
+      await loadScript('game.js');
+      MemoryLogger.info('BOOT', 'All scripts loaded successfully');
+    } catch(e) {
+      MemoryLogger.error('BOOT', 'Script load failed', { msg: e.message });
+    }
+  })();
+</script>
+
+</body>
+</html>
