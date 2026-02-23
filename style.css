@@ -408,10 +408,9 @@ body {
   word-break: keep-all;
 }
 
-/* 텍스트 트레인 — 라인 단위 fade */
+/* 텍스트 트레인 — 라인 단위 즉시 opacity 변경 (트랜지션 없음: GPU compositor layer 비용 0) */
 .text-line {
   opacity: 1;
-  transition: opacity 0.8s ease;
   line-height: 1.95;
   word-break: keep-all;
 }
