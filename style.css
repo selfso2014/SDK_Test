@@ -609,3 +609,11 @@ body {
   user-select: none;
   line-height: 1;
 }
+
+/* ── 텍스트 트레인 줄 스타일 ───────────────────────────────────── */
+/* opacity transition: pang 시 부드럽게 페이드 (CSS compositor = iOS 안전) */
+/* will-change:opacity — 컴포지터 레이어 예약 (레이아웃 리플로우 없음)      */
+.text-line {
+  transition: opacity 0.35s ease-out;
+  will-change: opacity;
+}

@@ -46,6 +46,9 @@ class Game {
 
         // gaze dot canvas
         this._gazeDotRafId = null;
+
+        // ── 텍스트 라인 캐시 (pang 콜백에서 querySelectorAll 없이 접근) ─
+        this._lineEls = null; // Array<HTMLElement> | null
     }
 
     // ── 상태 머신 진입 ───────────────────────────────────────────
@@ -359,8 +362,9 @@ class Game {
     _destroyReading() {
         MemoryLogger.snapshot('BEFORE_DESTROY_READING');
         const container = document.getElementById('reading-text');
-        const lineCount = container ? container.querySelectorAll('.text-line').length : 0;
+        const lineCount = this._lineEls ? this._lineEls.length : 0;
         if (container) container.innerHTML = '';
+        this._lineEls = null; // 참조 해제 → GC 가능
         this._pangDetector.reset();
         MemoryLogger.info('GAME', `[MEM] _destroyReading: removed ${lineCount} lines, pangDetector reset`);
         MemoryLogger.snapshot('AFTER_DESTROY_READING');
@@ -441,6 +445,9 @@ class Game {
 
         // PangDetector 무장: 이후 _onGaze → process() 호출 시 감지 시작
         this._pangDetector.lockLayout(lineYs, lineHalfH);
+
+        // 라인 엘리먼트 캐시 저장 (pang 콜백에서 재사용)
+        this._lineEls = lineEls;
     }
 
     // PangDetector가 줄 완료를 감지했을 때 호출되는 콜백
@@ -451,19 +458,34 @@ class Game {
             `✅ Line ${lineIdx} complete | vx=${vx.toFixed(3)} px/ms`);
         MemoryLogger.snapshot(`PANG_L${lineIdx}`);
 
-        // 시각 효과 (CSS-only, GPU 텍스처 없음)
+        // ── 텍스트 트레인 비주얼 ──────────────────────────────────
+        // pang 시점(줄 완료)에만 DOM 업데이트 → 30Hz 쓰기 없음 (iOS 안전)
+        // 읽은 줄: 페이드아웃 | 아직 안 읽은 줄: 그대로 표시
+        if (this._lineEls) {
+            this._lineEls.forEach((el, i) => {
+                if (i < lineIdx) {
+                    // 이미 읽고 지나간 줄 → 완전히 사라짐
+                    if (el.style.opacity !== '0') el.style.opacity = '0';
+                } else if (i === lineIdx) {
+                    // 방금 완료된 줄 → 희미하게 잔상
+                    if (el.style.opacity !== '0.15') el.style.opacity = '0.15';
+                }
+                // i > lineIdx: 아직 안 읽은 줄 → 변경 없음 (opacity 1.0 유지)
+            });
+        }
+
+        // ── 줄 끝 팡 이펙트 ─────────────────────────────────────
         this._triggerLineEffect(lineIdx);
     }
 
-    // 줄 완료 시각 이펙트 — CSS @keyframes만 사용 (이미지/GPU 텍스처 없음)
+    // 줄 완료 시각 이펙트 — CSS @keyframes + this._lineEls 캐시 사용
+    // querySelectorAll 호출 없음 (iOS DOM 접근 최소화)
     // 생성 후 700ms 뒤 자동 DOM 제거 → 메모리 잔류 없음
     _triggerLineEffect(lineIdx) {
-        const container = document.getElementById('reading-text');
-        if (!container) return;
-        const lineEls = container.querySelectorAll('.text-line');
-        if (!lineEls[lineIdx]) return;
+        // this._lineEls 캐시 사용 → querySelectorAll 없음
+        if (!this._lineEls || !this._lineEls[lineIdx]) return;
 
-        const r = lineEls[lineIdx].getBoundingClientRect();
+        const r = this._lineEls[lineIdx].getBoundingClientRect();
         const el = document.createElement('div');
         el.className = 'pang-fx';
         el.style.cssText =
