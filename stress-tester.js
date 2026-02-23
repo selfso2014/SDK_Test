@@ -70,20 +70,17 @@ const MemoryStressTester = (() => {
             } catch (e) {
                 // 할당 자체가 실패하면 OOM 도달
                 MemoryLogger.error('STRESS', `❌ ArrayBuffer allocation FAILED → OOM`, { msg: e.message });
-                MemoryLogger.downloadLogs(); // 즉시 저장
                 _stop();
                 return;
             }
         }
 
-        // ③ OBSERVE_SEC 동안 관찰 후 → 로그 저장 → 다음 레벨
+        // ③ OBSERVE_SEC 동안 관찰 후 → 다음 레벨
         _timerId = setTimeout(() => {
-            // 이 레벨이 안정적으로 지남 → 로그 저장 (다음 레벨 크래시 대비)
             MemoryLogger.info('STRESS',
                 `  ✅ Level ${_level} STABLE (${OBSERVE_SEC}s passed) ` +
-                `total=${allocMB}MB — saving log...`
+                `total=${allocMB}MB`
             );
-            MemoryLogger.downloadLogs(); // 크래시 전 마지막 보험
 
             // 다음 레벨로
             _level++;
