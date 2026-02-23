@@ -31,6 +31,9 @@ class Game {
         this._trainLines = [];       // [HTMLElement] 라인 div 목록
         this._trainCurrentLine = -1; // 현재 gaze가 있는 라인 인덱스
         this._trainReady = false;    // 라인 그룹화 완료 여부
+        // ⚠️ 캐시: 렌더 시 1회만 측정 (반복 DOM 읽기 괈지)
+        this._trainWrapTop = 0;      // wrap.getBoundingClientRect().top 케시
+        this._trainLineH = 32;     // 라인 높이 케시 (px)
 
         // 캘리브레이션 UI
         this._calDotX = null;
@@ -389,44 +392,47 @@ class Game {
 
             MemoryLogger.info('GAME',
                 `TextTrain built: ${this._trainLines.length} lines`);
+
+            // ⚠️ 핀 포인트: getBoundingClientRect/offsetTop을 여기서 1회만 케시
+            // _updateTextTrain이 30Hz로 호출되므로 DOM 읽기는 절대 금지
+            const wrap = document.getElementById('reading-text-wrap');
+            if (wrap) {
+                this._trainWrapTop = wrap.getBoundingClientRect().top;
+                this._trainLineH = this._trainLines.length > 1
+                    ? (this._trainLines[1].offsetTop - this._trainLines[0].offsetTop)
+                    : 32;
+                MemoryLogger.info('GAME',
+                    `TextTrain cache: wrapTop=${this._trainWrapTop.toFixed(0)} lineH=${this._trainLineH.toFixed(0)}`);
+            }
             this._trainReady = true;
         }, 150);
     }
 
     // gaze Y(스크린 좌표) → 현재 라인 인덱스 → 2줄 이상 뒤 fade-out
+    // ⚠️ 핸 포인트: DOM 읽기 없음 (모두 케시된 값 사용)
     _updateTextTrain(gazeY) {
         if (!this._trainLines.length) return;
 
-        const wrap = document.getElementById('reading-text-wrap');
-        if (!wrap) return;
-        const wrapRect = wrap.getBoundingClientRect();
-
-        // 라인 높이 추정: 첫 두 라인의 offsetTop 차이
-        const lineH = this._trainLines.length > 1
-            ? (this._trainLines[1].offsetTop - this._trainLines[0].offsetTop)
-            : 32;
-
-        // gaze Y → wrap 기준 상대 좌표
-        const relY = gazeY - wrapRect.top + wrap.scrollTop;
-        if (relY < 0 || relY > wrapRect.height + lineH) return;
+        // 캐시된 값만 사용 → 순수 산술, DOM 읽기 없음
+        const relY = gazeY - this._trainWrapTop;
+        if (relY < 0) return;
 
         const gazeLine = Math.max(0, Math.min(
-            Math.floor(relY / lineH),
+            Math.floor(relY / this._trainLineH),
             this._trainLines.length - 1
         ));
 
-        // 단방향: 앞으로만 이동 (이미 지나친 라인은 재표시 안 함)
+        // 라인이 변경될 때만 실행 (단방향)
         if (gazeLine <= this._trainCurrentLine) return;
         this._trainCurrentLine = gazeLine;
 
         this._trainLines.forEach((lineDiv, i) => {
             const diff = this._trainCurrentLine - i;
-            if (diff <= 0) {
-                lineDiv.style.opacity = '1';   // 현재 또는 앞 라인
-            } else if (diff === 1) {
-                lineDiv.style.opacity = '0.2'; // 1줄 뒤: 희미
-            } else {
-                lineDiv.style.opacity = '0';   // 2줄+ 뒤: 사라짐
+            const next = diff <= 0 ? '1' : diff === 1 ? '0.2' : '0';
+            // 실제 변경시에만 쓰기 (redundant style write 방지)
+            if (lineDiv.dataset.op !== next) {
+                lineDiv.style.opacity = next;
+                lineDiv.dataset.op = next;
             }
         });
     }
