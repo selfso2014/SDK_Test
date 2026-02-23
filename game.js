@@ -285,14 +285,19 @@ class Game {
     }
 }
 
-// ── DOM 준비 후 게임 인스턴스 생성 ──────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
+// ── 게임 인스턴스 즉시 생성 ─────────────────────────────────────
+// 주의: game.js는 <script type="module"> 내 loadScript()로 동적 로드됨.
+// DOMContentLoaded는 모듈 실행 전에 이미 발화 → addEventListener('DOMContentLoaded') 사용 불가.
+// DOM은 이미 완성된 상태이므로 즉시 실행.
+(function initGame() {
     const game = new Game();
     window.__game = game;
+    MemoryLogger.info('GAME', 'Game instance created, binding buttons...');
 
     // 시작 버튼
     const btnStart = document.getElementById('btn-start');
     if (btnStart) btnStart.addEventListener('click', () => game.start());
+    else MemoryLogger.warn('GAME', '#btn-start not found in DOM');
 
     // 재시도 버튼
     const btnRetry = document.getElementById('btn-retry');
@@ -322,4 +327,6 @@ window.addEventListener('DOMContentLoaded', () => {
             canvas.height = window.innerHeight;
         }
     });
-});
+
+    MemoryLogger.info('GAME', 'All buttons bound. Ready.');
+})();
