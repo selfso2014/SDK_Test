@@ -217,6 +217,14 @@ class Game {
             this.score === this.totalQuestions ? '🎉 완벽해요!' :
                 this.score >= this.totalQuestions / 2 ? '👍 잘했어요!' : '📚 조금 더 연습해요!';
         document.getElementById('status-text').textContent = '게임 완료!';
+
+        // 게임 완료 시 자동 로그 저장 (마지막 로그 누락 방지)
+        // 1초 딜레이: RESULT 상태 로그가 모두 기록된 후 저장
+        MemoryLogger.info('GAME', 'Auto-saving log on game completion...');
+        setTimeout(() => {
+            MemoryLogger.info('GAME', 'Auto-save triggered ✅');
+            MemoryLogger.downloadLogs();
+        }, 1000);
     }
 
     // ── 시선 콜백 ────────────────────────────────────────────────

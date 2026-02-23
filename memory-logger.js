@@ -113,8 +113,15 @@ const MemoryLogger = (() => {
         const a = document.createElement('a');
         a.href = url;
         a.download = `seeso-log-${ts}.txt`;
+        a.style.display = 'none';
+        // Android Chrome: body에 append 후 클릭해야 다운로드 동작
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        // revokeObjectURL 지연: 즉시 호출 시 Android에서 다운로드 전에 URL 무효화될 수 있음
+        setTimeout(() => {
+            URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }, 5000);
     }
 
     // ── UI 패널 (우하단 오버레이) ────────────────────────────────
