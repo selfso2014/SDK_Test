@@ -408,6 +408,14 @@ body {
   word-break: keep-all;
 }
 
+/* 텍스트 트레인 — 라인 단위 fade */
+.text-line {
+  opacity: 1;
+  transition: opacity 0.8s ease;
+  line-height: 1.95;
+  word-break: keep-all;
+}
+
 .reading-actions {
   display: flex;
   justify-content: center;

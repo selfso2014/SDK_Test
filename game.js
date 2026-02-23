@@ -4,8 +4,11 @@
  *
  * 상태 흐름:
  * IDLE → SDK_INIT → CALIBRATION → READING → QUIZ → RESULT
- * (startTracking은 SDK_INIT 직후, 내부에서 getUserMedia 처리)
  */
+
+// 시선 데이터 롤링 버퍼 최대 크기: 60s @ 30Hz
+const MAX_GAZE_ENTRIES = 1800;
+
 
 class Game {
     constructor() {
@@ -20,6 +23,14 @@ class Game {
         this._gazeX = null;
         this._gazeY = null;
         this._gazeActive = false;    // gaze dot 표시 여부
+
+        // ── 시선 데이터 버퍼 ({x, y, t} 롤링) ─────────────────
+        this._gazeData = [];         // 최대 MAX_GAZE_ENTRIES 유지
+
+        // ── 텍스트 트레인 상태 ──────────────────────────────────
+        this._trainLines = [];       // [HTMLElement] 라인 div 목록
+        this._trainCurrentLine = -1; // 현재 gaze가 있는 라인 인덱스
+        this._trainReady = false;    // 라인 그룹화 완료 여부
 
         // 캘리브레이션 UI
         this._calDotX = null;
@@ -157,19 +168,38 @@ class Game {
             return;
         }
 
+        // 새 지문 시작 → 시선 데이터 초기화
+        this._gazeData = [];
+        this._trainLines = [];
+        this._trainCurrentLine = -1;
+        this._trainReady = false;
+
         await this.setState('READING');
         this._gazeActive = true;
         this._startGazeDot();
 
-        // 지문 렌더링
+        // 지문 렌더링 (텍스트 트레인)
         document.getElementById('reading-title').textContent = this.currentPassage.title;
-        document.getElementById('reading-text').textContent = this.currentPassage.text;
+        this._renderTextTrain(this.currentPassage.text);
         document.getElementById('status-text').textContent = '📖 지문을 읽어주세요';
     }
 
     // ── 퀴즈 화면 ────────────────────────────────────────────────
     async showQuiz() {
         if (!this.currentPassage) return;
+
+        // 시선 데이터 통계 로깅
+        if (this._gazeData.length > 0) {
+            const first = this._gazeData[0].t;
+            const last = this._gazeData[this._gazeData.length - 1].t;
+            const durSec = ((last - first) / 1000).toFixed(1);
+            const hz = (this._gazeData.length / Math.max(1, (last - first) / 1000)).toFixed(1);
+            MemoryLogger.info('GAZE',
+                `Reading stats: entries=${this._gazeData.length} ` +
+                `dur=${durSec}s avg_hz=${hz} ` +
+                `passage=${this.currentPassage.id}`
+            );
+        }
 
         await this.setState('QUIZ');
         // 퀴즈 화면에서는 gaze dot 불필요 → RAF 중지 (iOS 메모리 절약)
@@ -246,6 +276,20 @@ class Game {
         if (!gazeInfo) return;
         this._gazeX = gazeInfo.x;
         this._gazeY = gazeInfo.y;
+
+        // READING 상태에서만 데이터 수집 + 텍스트 트레인 업데이트
+        if (this.state === 'READING') {
+            // {x, y, t} 롤링 버퍼
+            this._gazeData.push({
+                x: Math.round(gazeInfo.x),
+                y: Math.round(gazeInfo.y),
+                t: Date.now()
+            });
+            if (this._gazeData.length > MAX_GAZE_ENTRIES) this._gazeData.shift();
+
+            // 텍스트 트레인 업데이트
+            if (this._trainReady) this._updateTextTrain(gazeInfo.y);
+        }
     }
 
     _onDebug(fps) {
@@ -299,6 +343,92 @@ class Game {
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
+    }
+
+    // ── 텍스트 트레인 ────────────────────────────────────────────
+    // 텍스트를 단어 span으로 임시 렌더 → offsetTop으로 라인 감지
+    // → 라인 div로 재구성 → gaze Y 기반 fade-out
+    _renderTextTrain(text) {
+        const container = document.getElementById('reading-text');
+        container.innerHTML = '';
+
+        // 1단계: 단어 span으로 임시 렌더 (offsetTop 측정용)
+        const tokens = text.split(/(\s+)/);
+        tokens.forEach(token => {
+            const span = document.createElement('span');
+            span.style.display = 'inline';
+            span.textContent = token;
+            container.appendChild(span);
+        });
+
+        // 2단계: 레이아웃 완료 후 라인 그룹화 → 라인 div로 재구성
+        // 150ms 대기: iOS에서 레이아웃 계산 완료 보장
+        setTimeout(() => {
+            const spans = Array.from(container.querySelectorAll('span'));
+            const lineMap = new Map(); // offsetTop → 텍스트 토큰 배열
+
+            spans.forEach(span => {
+                const top = span.offsetTop;
+                if (!lineMap.has(top)) lineMap.set(top, []);
+                lineMap.get(top).push(span.textContent);
+            });
+
+            // 3단계: 라인 div로 재구성 (CSS transition은 라인 단위 적용 = 성능 최적화)
+            container.innerHTML = '';
+            this._trainLines = [];
+
+            Array.from(lineMap.entries())
+                .sort((a, b) => a[0] - b[0])
+                .forEach(([_, tokens]) => {
+                    const lineDiv = document.createElement('div');
+                    lineDiv.className = 'text-line';
+                    lineDiv.textContent = tokens.join('');
+                    container.appendChild(lineDiv);
+                    this._trainLines.push(lineDiv);
+                });
+
+            MemoryLogger.info('GAME',
+                `TextTrain built: ${this._trainLines.length} lines`);
+            this._trainReady = true;
+        }, 150);
+    }
+
+    // gaze Y(스크린 좌표) → 현재 라인 인덱스 → 2줄 이상 뒤 fade-out
+    _updateTextTrain(gazeY) {
+        if (!this._trainLines.length) return;
+
+        const wrap = document.getElementById('reading-text-wrap');
+        if (!wrap) return;
+        const wrapRect = wrap.getBoundingClientRect();
+
+        // 라인 높이 추정: 첫 두 라인의 offsetTop 차이
+        const lineH = this._trainLines.length > 1
+            ? (this._trainLines[1].offsetTop - this._trainLines[0].offsetTop)
+            : 32;
+
+        // gaze Y → wrap 기준 상대 좌표
+        const relY = gazeY - wrapRect.top + wrap.scrollTop;
+        if (relY < 0 || relY > wrapRect.height + lineH) return;
+
+        const gazeLine = Math.max(0, Math.min(
+            Math.floor(relY / lineH),
+            this._trainLines.length - 1
+        ));
+
+        // 단방향: 앞으로만 이동 (이미 지나친 라인은 재표시 안 함)
+        if (gazeLine <= this._trainCurrentLine) return;
+        this._trainCurrentLine = gazeLine;
+
+        this._trainLines.forEach((lineDiv, i) => {
+            const diff = this._trainCurrentLine - i;
+            if (diff <= 0) {
+                lineDiv.style.opacity = '1';   // 현재 또는 앞 라인
+            } else if (diff === 1) {
+                lineDiv.style.opacity = '0.2'; // 1줄 뒤: 희미
+            } else {
+                lineDiv.style.opacity = '0';   // 2줄+ 뒤: 사라짐
+            }
+        });
     }
 
     // ── 재시작 ───────────────────────────────────────────────────
