@@ -31,13 +31,12 @@ class Game {
         this._gIdx = 0;    // 다음 쓰기 위치
         this._gCount = 0;    // 실제 저장된 수
 
-        // ── 텍스트 트레인 상태 ──────────────────────────────────
-        this._trainLines = [];       // [HTMLElement] 라인 div 목록
-        this._trainCurrentLine = -1; // 현재 gaze가 있는 라인 인덱스
-        this._trainReady = false;    // 라인 그룹화 완료 여부
-        // ⚠️ 캐시: 렌더 시 1회만 측정 (반복 DOM 읽기 괈지)
-        this._trainWrapTop = 0;      // wrap.getBoundingClientRect().top 케시
-        this._trainLineH = 32;     // 라인 높이 케시 (px)
+        // ── Pang Detector (Max-Min Cascade V33.0) ────────────────
+        // TypedArray 순환버퍼를 직접 참조 → 프레임당 0 할당
+        this._pangDetector = new PangDetector(
+            this._gx, this._gy, this._gt, MAX_GAZE_ENTRIES,
+            (lineIdx, vx) => this._onPang(lineIdx, vx)
+        );
 
         // 캘리브레이션 UI
         this._calDotX = null;
@@ -178,17 +177,15 @@ class Game {
         // 새 지문 시작 → 시선 버퍼 인덱스 리셋 (TypedArray 데이터는 그대로 유지)
         this._gIdx = 0;
         this._gCount = 0;
-        this._trainLines = [];
-        this._trainCurrentLine = -1;
-        this._trainReady = false;
+        this._pangDetector.reset();
 
         await this.setState('READING');
         this._gazeActive = true;
         this._startGazeDot();
 
-        // 지문 렌더링 (텍스트 트레인)
+        // 지문 렌더링 + lockLayout (줄 Y 좌표 1회 캐시 → PangDetector 무장)
         document.getElementById('reading-title').textContent = this.currentPassage.title;
-        this._renderTextTrain(this.currentPassage.text);
+        this._initReading(this.currentPassage.text);
         document.getElementById('status-text').textContent = '📖 지문을 읽어주세요';
     }
 
@@ -196,9 +193,8 @@ class Game {
     async showQuiz() {
         if (!this.currentPassage) return;
 
-        // [FIX-MEM] READING → QUIZ 전환: text train DOM 즉시 해제
-        // (다음 _renderTextTrain()까지 기다리지 않고 즉시 GC에게 반납)
-        this._destroyTextTrain();
+        // [FIX-MEM] READING → QUIZ 전환: 읽기 DOM 즉시 해제 + PangDetector 리셋
+        this._destroyReading();
 
         // 시선 데이터 통계 로깅
         if (this._gCount > 0) {
@@ -290,7 +286,7 @@ class Game {
         this._gazeX = gazeInfo.x;
         this._gazeY = gazeInfo.y;
 
-        // READING 상태에서만 데이터 수집 + 텍스트 트레인 업데이트
+        // READING 상태에서만 데이터 수집 + Pang 감지
         if (this.state === 'READING') {
             // TypedArray 순환버퍼에 쓰기 (GC 없음)
             this._gx[this._gIdx] = gazeInfo.x;
@@ -299,8 +295,8 @@ class Game {
             this._gIdx = (this._gIdx + 1) % MAX_GAZE_ENTRIES;
             if (this._gCount < MAX_GAZE_ENTRIES) this._gCount++;
 
-            // 텍스트 트레인 업데이트
-            if (this._trainReady) this._updateTextTrain(gazeInfo.y);
+            // Max-Min Cascade Return Sweep 감지 (할당 0, DOM 읽기 0)
+            this._pangDetector.process(this._gIdx, this._gCount);
         }
     }
 
@@ -357,111 +353,127 @@ class Game {
         }
     }
 
-    // ── 텍스트 트레인 ────────────────────────────────────────────
+    // ── 읽기 시스템 (Pang Detector 기반) ───────────────────────────
 
-    // [FIX-MEM] Text Train 즉시 해제 — READING 종료 시 호출.
-    // 이전: _renderTextTrain()이 다음 지문 시작 시 innerHTML='' 했음
-    //       → QUIZ 화면에 있는 동안 .text-line div가 DOM에 잔류.
-    // 이후: READING → QUIZ 전환 즉시 container 비움 → GC에게 즉시 반납.
-    _destroyTextTrain() {
-        MemoryLogger.snapshot('BEFORE_DESTROY_TEXT_TRAIN');
+    // READING → 퀴즈/결과 전환 시: DOM 즉시 해제 + PangDetector 리셋
+    _destroyReading() {
+        MemoryLogger.snapshot('BEFORE_DESTROY_READING');
         const container = document.getElementById('reading-text');
+        const lineCount = container ? container.querySelectorAll('.text-line').length : 0;
         if (container) container.innerHTML = '';
-        const lineCount = this._trainLines.length;
-        this._trainLines = [];
-        this._trainReady = false;
-        this._trainCurrentLine = -1;
-        MemoryLogger.info('GAME',
-            `[FIX-MEM] _destroyTextTrain: removed ${lineCount} .text-line divs`);
-        MemoryLogger.snapshot('AFTER_DESTROY_TEXT_TRAIN');
+        this._pangDetector.reset();
+        MemoryLogger.info('GAME', `[MEM] _destroyReading: removed ${lineCount} lines, pangDetector reset`);
+        MemoryLogger.snapshot('AFTER_DESTROY_READING');
     }
 
-    // 텍스트를 단어 span으로 임시 렌더 → offsetTop으로 라인 감지
-    // → 라인 div로 재구성 → gaze Y 기반 fade-out
-    _renderTextTrain(text) {
+    // 지문 초기화:
+    //   1. 단어 span으로 임시 렌더 → offsetTop으로 줄 경계 감지
+    //   2. 줄 div로 재구성 (text-line)
+    //   3. lockLayout: 각 줄 center Y를 Float32Array에 1회 캐시
+    //   4. PangDetector.lockLayout() 호출 → 이후 gaze 콜백에서 무장
+    _initReading(text) {
         const container = document.getElementById('reading-text');
         container.innerHTML = '';
 
-        // 1단계: 단어 span으로 임시 렌더 (offsetTop 측정용)
-        const tokens = text.split(/(\s+)/);
-        tokens.forEach(token => {
-            const span = document.createElement('span');
-            span.style.display = 'inline';
-            span.textContent = token;
-            container.appendChild(span);
+        // Step 1: 단어 span 임시 렌더 (줄 감지용)
+        text.split(/\s+/).filter(Boolean).forEach(word => {
+            const s = document.createElement('span');
+            s.style.display = 'inline';
+            s.textContent = word + '\u00A0'; // non-breaking space 단어 구분
+            container.appendChild(s);
         });
 
-        // 2단계: 레이아웃 완료 후 라인 그룹화 → 라인 div로 재구성
-        // 150ms 대기: iOS에서 레이아웃 계산 완료 보장
+        // Step 2~4: 150ms 후 줄 재구성 + lockLayout
+        // iOS에서 레이아웃 계산 완료 보장
         setTimeout(() => {
             const spans = Array.from(container.querySelectorAll('span'));
-            const lineMap = new Map(); // offsetTop → 텍스트 토큰 배열
+            const lineMap = new Map(); // offsetTop → word 배열
 
-            spans.forEach(span => {
-                const top = span.offsetTop;
+            spans.forEach(s => {
+                const top = s.offsetTop;
                 if (!lineMap.has(top)) lineMap.set(top, []);
-                lineMap.get(top).push(span.textContent);
+                lineMap.get(top).push(s.textContent);
             });
 
-            // 3단계: 라인 div로 재구성 (CSS transition은 라인 단위 적용 = 성능 최적화)
+            // Step 2: 줄 div 재구성
             container.innerHTML = '';
-            this._trainLines = [];
+            const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
+            const lineEls = sortedTops.map(top => {
+                const div = document.createElement('div');
+                div.className = 'text-line';
+                div.textContent = lineMap.get(top).join('');
+                container.appendChild(div);
+                return div;
+            });
 
-            Array.from(lineMap.entries())
-                .sort((a, b) => a[0] - b[0])
-                .forEach(([_, tokens]) => {
-                    const lineDiv = document.createElement('div');
-                    lineDiv.className = 'text-line';
-                    lineDiv.textContent = tokens.join('');
-                    container.appendChild(lineDiv);
-                    this._trainLines.push(lineDiv);
-                });
+            MemoryLogger.info('GAME', `_initReading: ${lineEls.length} lines built`);
 
-            MemoryLogger.info('GAME',
-                `TextTrain built: ${this._trainLines.length} lines`);
-
-            // ⚠️ 핀 포인트: getBoundingClientRect/offsetTop을 여기서 1회만 케시
-            // _updateTextTrain이 30Hz로 호출되므로 DOM 읽기는 절대 금지
-            const wrap = document.getElementById('reading-text-wrap');
-            if (wrap) {
-                this._trainWrapTop = wrap.getBoundingClientRect().top;
-                this._trainLineH = this._trainLines.length > 1
-                    ? (this._trainLines[1].offsetTop - this._trainLines[0].offsetTop)
-                    : 32;
-                MemoryLogger.info('GAME',
-                    `TextTrain cache: wrapTop=${this._trainWrapTop.toFixed(0)} lineH=${this._trainLineH.toFixed(0)}`);
-            }
-            this._trainReady = true;
+            // Step 3: lockLayout — 줄 center Y 1회 측정 → Float32Array
+            this._lockLayout(lineEls);
         }, 150);
     }
 
-    // gaze Y(스크린 좌표) → 현재 라인 인덱스 → 2줄 이상 뒤 fade-out
-    // ⚠️ 핸 포인트: DOM 읽기 없음 (모두 케시된 값 사용)
-    _updateTextTrain(gazeY) {
-        if (!this._trainLines.length) return;
+    // 각 줄 center Y 좌표를 1회 측정하여 PangDetector에 전달
+    // 이후 gaze 콜백에서는 DOM 접근 없이 Float32Array 스캔만 수행
+    _lockLayout(lineEls) {
+        const n = lineEls.length;
+        if (n === 0) return;
 
-        // 캐시된 값만 사용 → 순수 산술, DOM 읽기 없음
-        const relY = gazeY - this._trainWrapTop;
-        if (relY < 0) return;
+        const lineYs = new Float32Array(n);
+        let totalH = 0;
 
-        const gazeLine = Math.max(0, Math.min(
-            Math.floor(relY / this._trainLineH),
-            this._trainLines.length - 1
-        ));
-
-        // 라인이 변경될 때만 실행 (단방향)
-        if (gazeLine <= this._trainCurrentLine) return;
-        this._trainCurrentLine = gazeLine;
-
-        this._trainLines.forEach((lineDiv, i) => {
-            const diff = this._trainCurrentLine - i;
-            const next = diff <= 0 ? '1' : diff === 1 ? '0.2' : '0';
-            // 실제 변경시에만 쓰기 (redundant style write 방지)
-            if (lineDiv.dataset.op !== next) {
-                lineDiv.style.opacity = next;
-                lineDiv.dataset.op = next;
-            }
+        lineEls.forEach((el, i) => {
+            const r = el.getBoundingClientRect();
+            lineYs[i] = r.top + r.height * 0.5; // center Y (screen 좌표)
+            totalH += r.height;
         });
+
+        // lineHalfH: 라인 높이 절반 * 1.1 (hit-test 여유 10%)
+        const avgH = totalH / n;
+        const lineHalfH = avgH * 0.55;
+
+        // 디버그 로그
+        MemoryLogger.info('GAME',
+            `lockLayout: ${n} lines | avgH=${avgH.toFixed(1)} | halfH=${lineHalfH.toFixed(1)}`);
+        for (let i = 0; i < n; i++) {
+            MemoryLogger.info('GAME', `  L${i}: centerY=${lineYs[i].toFixed(0)}px`);
+        }
+
+        // PangDetector 무장: 이후 _onGaze → process() 호출 시 감지 시작
+        this._pangDetector.lockLayout(lineYs, lineHalfH);
+    }
+
+    // PangDetector가 줄 완료를 감지했을 때 호출되는 콜백
+    // lineIdx: 방금 완료된 줄 인덱스 (0-based)
+    // vx: 리턴스윕 속도 (px/ms, 음수)
+    _onPang(lineIdx, vx) {
+        MemoryLogger.info('PANG',
+            `✅ Line ${lineIdx} complete | vx=${vx.toFixed(3)} px/ms`);
+        MemoryLogger.snapshot(`PANG_L${lineIdx}`);
+
+        // 시각 효과 (CSS-only, GPU 텍스처 없음)
+        this._triggerLineEffect(lineIdx);
+    }
+
+    // 줄 완료 시각 이펙트 — CSS @keyframes만 사용 (이미지/GPU 텍스처 없음)
+    // 생성 후 700ms 뒤 자동 DOM 제거 → 메모리 잔류 없음
+    _triggerLineEffect(lineIdx) {
+        const container = document.getElementById('reading-text');
+        if (!container) return;
+        const lineEls = container.querySelectorAll('.text-line');
+        if (!lineEls[lineIdx]) return;
+
+        const r = lineEls[lineIdx].getBoundingClientRect();
+        const el = document.createElement('div');
+        el.className = 'pang-fx';
+        el.style.cssText =
+            `position:fixed;` +
+            `top:${(r.top + r.height * 0.3).toFixed(0)}px;` +
+            `left:${r.right.toFixed(0)}px;` +
+            `pointer-events:none;font-size:20px;`;
+        el.textContent = '✨';
+        document.body.appendChild(el);
+        setTimeout(() => { if (el.parentNode) el.remove(); }, 700);
     }
 
     // ── 재시작 ───────────────────────────────────────────────────
