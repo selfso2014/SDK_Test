@@ -1,315 +1,205 @@
 /**
- * MemoryLogger - iPhone 크래시 원인 파악을 위한 메모리/성능 추적 모듈
- * 
- * 수집 항목:
- * - performance.memory (Chrome only)
- * - 상태 전환 시 타임스탬프 + 메모리 스냅샷
- * - gaze 콜백 호출 빈도
- * - 전역 오류 캐치 (error, unhandledrejection)
- * - iOS 전용 추가 경고
+ * memory-logger.js — SeeSo Debug Logger (경량 텍스트 버전)
+ *
+ * 로그 형식: [elapsed][LEVEL][TAG] message  {data}
+ * 다운로드: .txt 파일 (JSON 아님)
  */
 
 const MemoryLogger = (() => {
-    const MAX_LOGS = 1000;
-    const logs = [];
+    const MAX_LINES = 500;
+    const lines = [];          // 저장되는 텍스트 라인 배열
     const startTime = Date.now();
 
-    // ── 기기/환경 정보 ──────────────────────────────────────────
     const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
     const IS_SAFARI = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
     const IS_ANDROID = /Android/i.test(navigator.userAgent);
-    const UA = navigator.userAgent;
+    const DEVICE = IS_IOS ? '🍎iOS' : IS_ANDROID ? '🤖And' : '💻PC';
 
-    // ── gaze 통계 추적 ──────────────────────────────────────────
     let gazeCount = 0;
-    let gazeLastWindowStart = Date.now();
+    let gazeWindowStart = Date.now();
     let gazeHz = 0;
 
-    // ── 내부 헬퍼 ───────────────────────────────────────────────
-    function getMemoryInfo() {
-        // Chrome/Edge only: performance.memory
-        const mem = performance?.memory;
-        if (mem) {
-            return {
-                usedJSHeapMB: (mem.usedJSHeapSize / 1048576).toFixed(2),
-                totalJSHeapMB: (mem.totalJSHeapSize / 1048576).toFixed(2),
-                limitJSHeapMB: (mem.jsHeapSizeLimit / 1048576).toFixed(2),
-                usedPct: ((mem.usedJSHeapSize / mem.jsHeapSizeLimit) * 100).toFixed(1) + '%',
-            };
-        }
-        // iOS Safari: performance.memory 미지원 → 대체 정보
-        return {
-            usedJSHeapMB: 'N/A (iOS)',
-            totalJSHeapMB: 'N/A',
-            limitJSHeapMB: 'N/A',
-            usedPct: 'N/A',
-            note: IS_IOS ? 'iOS does not expose performance.memory' : 'Browser not supported',
-        };
+    // ── 메모리 정보 (한 줄 요약) ────────────────────────────────
+    function memStr() {
+        const m = performance?.memory;
+        if (m) return `${(m.usedJSHeapSize / 1048576).toFixed(1)}MB/${(m.jsHeapSizeLimit / 1048576).toFixed(0)}MB`;
+        return IS_IOS ? 'mem=N/A(iOS)' : 'mem=N/A';
     }
 
-    function getTimestamp() {
+    // ── 핵심: 한 줄 텍스트 로그 생성 ───────────────────────────
+    function addLine(level, tag, message, data) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-        return { wall: new Date().toISOString(), elapsedSec: parseFloat(elapsed) };
-    }
 
-    function addLog(level, tag, message, data) {
-        const entry = {
-            ...getTimestamp(),
-            level,   // 'INFO' | 'WARN' | 'ERROR' | 'SNAP'
-            tag,
-            message,
-            mem: getMemoryInfo(),
-            ...(data ? { data } : {}),
-        };
+        // 데이터가 있으면 간단한 인라인 표현
+        let dataStr = '';
+        if (data !== undefined && data !== null) {
+            try {
+                const s = typeof data === 'string' ? data : JSON.stringify(data);
+                dataStr = '  ' + s.slice(0, 120); // 최대 120자
+            } catch (_) { dataStr = '  [unparseable]'; }
+        }
 
-        logs.push(entry);
-        if (logs.length > MAX_LOGS) logs.shift(); // 오래된 로그 제거
+        const line = `[${elapsed}s][${level}][${tag}] ${message}${dataStr}`;
+        lines.push(line);
+        if (lines.length > MAX_LINES) lines.shift();
 
         // 콘솔 출력
-        const prefix = `[${entry.elapsedSec}s][${level}][${tag}]`;
-        if (level === 'ERROR') {
-            console.error(prefix, message, data ?? '');
-        } else if (level === 'WARN') {
-            console.warn(prefix, message, data ?? '');
-        } else {
-            console.log(prefix, message, data ?? '');
-        }
+        if (level === 'ERROR') console.error(line);
+        else if (level === 'WARN') console.warn(line);
+        else console.log(line);
 
         // UI 패널 업데이트
-        updatePanel(entry);
-        return entry;
+        updatePanel(level, line);
+        return line;
     }
 
     // ── 퍼블릭 API ──────────────────────────────────────────────
-    function info(tag, message, data) { return addLog('INFO', tag, message, data); }
-    function warn(tag, message, data) { return addLog('WARN', tag, message, data); }
-    function error(tag, message, data) { return addLog('ERROR', tag, message, data); }
+    function info(tag, msg, data) { return addLine('INFO', tag, msg, data); }
+    function warn(tag, msg, data) { return addLine('WARN', tag, msg, data); }
+    function error(tag, msg, data) { return addLine('ERR ', tag, msg, data); }
 
-    /**
-     * 상태 전환 시 메모리 스냅샷 기록
-     * @param {string} label - 스냅샷 레이블 (예: 'SDK_INIT_DONE')
-     */
+    // 스냅샷: 상태 전환 시 메모리 찍기
     function snapshot(label) {
-        return addLog('SNAP', 'MEMORY', label, {
-            gazeHz,
-            isIOS: IS_IOS,
-            isSafari: IS_SAFARI,
-        });
+        return addLine('SNAP', 'MEM', `${label}  hz=${gazeHz} ${memStr()}`);
     }
 
-    /**
-     * gaze 콜백 호출 시마다 호출 — gaze Hz 계산
-     */
+    // gaze Hz 측정
     function countGaze() {
         gazeCount++;
         const now = Date.now();
-        const elapsed = now - gazeLastWindowStart;
-        if (elapsed >= 1000) {
-            gazeHz = Math.round((gazeCount / elapsed) * 1000);
+        if (now - gazeWindowStart >= 1000) {
+            gazeHz = Math.round((gazeCount / (now - gazeWindowStart)) * 1000);
             gazeCount = 0;
-            gazeLastWindowStart = now;
+            gazeWindowStart = now;
+            // 헤더 Hz 업데이트
+            const el = document.getElementById('gaze-fps');
+            if (el) el.textContent = gazeHz;
             updateStatsPanel();
         }
     }
 
     // ── 전역 에러 캐치 ──────────────────────────────────────────
     window.addEventListener('error', (e) => {
-        error('GLOBAL', `Uncaught Error: ${e.message}`, {
-            filename: e.filename,
-            lineno: e.lineno,
-            colno: e.colno,
-            stack: e.error?.stack,
-        });
+        error('GLOBAL', `${e.message}`, `${e.filename}:${e.lineno}`);
     });
-
     window.addEventListener('unhandledrejection', (e) => {
-        error('GLOBAL', `UnhandledRejection: ${e.reason?.message || String(e.reason)}`, {
-            stack: e.reason?.stack,
-        });
+        error('GLOBAL', `UnhandledRejection: ${e.reason?.message || String(e.reason)}`);
     });
 
-    // ── 주기적 메모리 폴링 (5초마다) ────────────────────────────
+    // ── 주기적 상태 (30초마다) ───────────────────────────────────
     setInterval(() => {
-        const mem = getMemoryInfo();
-        // iOS가 아닌(Chrome) 경우에만 주기적 스냅샷을 로그에 남김
-        if (mem.usedJSHeapMB !== 'N/A (iOS)') {
-            // 메모리 사용율 70% 초과 시 경고
-            const pct = parseFloat(mem.usedPct);
-            if (pct > 70) {
-                warn('MEM', `⚠️ High heap usage: ${mem.usedPct}`, mem);
-            }
-        }
-        updateStatsPanel();
-    }, 5000);
+        snapshot('PERIODIC');
+    }, 30000);
 
-    // ── UI 패널 ─────────────────────────────────────────────────
-    let panel = null;
-    let statsEl = null;
-    let logListEl = null;
-
-    function initPanel() {
-        // 이미 있으면 skip
-        if (document.getElementById('ml-panel')) return;
-
-        panel = document.createElement('div');
-        panel.id = 'ml-panel';
-        panel.innerHTML = `
-      <div id="ml-header">
-        <span>📊 Memory Debug</span>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <button id="ml-toggle-btn" onclick="MemoryLogger.togglePanel()">최소화</button>
-          <button id="ml-download-btn" onclick="MemoryLogger.downloadLogs()">📥 저장</button>
-        </div>
-      </div>
-      <div id="ml-stats"></div>
-      <div id="ml-loglist"></div>
-    `;
-        Object.assign(panel.style, {
-            position: 'fixed',
-            bottom: '0',
-            right: '0',
-            width: '320px',
-            maxHeight: '40vh',
-            background: 'rgba(10,10,30,0.92)',
-            color: '#e0e0e0',
-            fontFamily: 'monospace',
-            fontSize: '11px',
-            zIndex: '99999',
-            borderRadius: '8px 0 0 0',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: '0 -2px 20px rgba(0,0,0,0.5)',
-        });
-
-        document.body.appendChild(panel);
-        statsEl = document.getElementById('ml-stats');
-        Object.assign(statsEl.style, {
-            padding: '4px 8px',
-            borderBottom: '1px solid #333',
-            flexShrink: '0',
-            lineHeight: '1.6',
-        });
-
-        logListEl = document.getElementById('ml-loglist');
-        Object.assign(logListEl.style, {
-            overflowY: 'auto',
-            flexGrow: '1',
-            padding: '4px 8px',
-        });
-
-        const header = document.getElementById('ml-header');
-        Object.assign(header.style, {
-            background: 'rgba(40,40,80,0.95)',
-            padding: '5px 8px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            cursor: 'pointer',
-            flexShrink: '0',
-        });
-
-        // 버튼 스타일
-        ['ml-toggle-btn', 'ml-download-btn'].forEach(id => {
-            const btn = document.getElementById(id);
-            if (btn) {
-                Object.assign(btn.style, {
-                    background: '#2a2a5a',
-                    color: '#aaf',
-                    border: '1px solid #44f',
-                    borderRadius: '4px',
-                    padding: '2px 6px',
-                    cursor: 'pointer',
-                    fontSize: '10px',
-                });
-            }
-        });
-
-        updateStatsPanel();
-    }
-
-    let panelMinimized = false;
-    function togglePanel() {
-        panelMinimized = !panelMinimized;
-        if (logListEl) logListEl.style.display = panelMinimized ? 'none' : 'block';
-        if (statsEl) statsEl.style.display = panelMinimized ? 'none' : 'block';
-        const btn = document.getElementById('ml-toggle-btn');
-        if (btn) btn.textContent = panelMinimized ? '펼치기' : '최소화';
-        if (panel) panel.style.maxHeight = panelMinimized ? 'auto' : '40vh';
-    }
-
-    function updateStatsPanel() {
-        if (!statsEl) return;
-        const mem = getMemoryInfo();
-        const isIOS = IS_IOS ? '🍎 iOS' : (IS_ANDROID ? '🤖 Android' : '💻 PC');
-        const isSafari = IS_SAFARI ? ' Safari' : '';
-        statsEl.innerHTML = `
-      <div>${isIOS}${isSafari} | Elapsed: <b>${((Date.now() - startTime) / 1000).toFixed(0)}s</b></div>
-      <div>Heap: <b>${mem.usedJSHeapMB}MB</b> / ${mem.limitJSHeapMB}MB (<b>${mem.usedPct}</b>)</div>
-      <div>Gaze Hz: <b>${gazeHz}</b> | Logs: <b>${logs.length}</b></div>
-    `;
-    }
-
-    function updatePanel(entry) {
-        if (!logListEl || panelMinimized) return;
-
-        const div = document.createElement('div');
-        const colors = { INFO: '#aaddff', WARN: '#ffdd88', ERROR: '#ff6666', SNAP: '#aaffaa' };
-        div.style.color = colors[entry.level] || '#ccc';
-        div.style.borderBottom = '1px solid #222';
-        div.style.padding = '1px 0';
-
-        let extra = '';
-        if (entry.data) {
-            try { extra = ' ' + JSON.stringify(entry.data).slice(0, 80); } catch (_) { }
-        }
-        div.textContent = `[${entry.elapsedSec}s][${entry.level}][${entry.tag}] ${entry.message}${extra}`;
-        logListEl.appendChild(div);
-
-        // 자동 스크롤
-        logListEl.scrollTop = logListEl.scrollHeight;
-
-        // 로그 라인 수 제한 (DOM이 너무 커지지 않도록)
-        while (logListEl.children.length > 200) {
-            logListEl.removeChild(logListEl.firstChild);
-        }
-    }
-
+    // ── 다운로드: 텍스트 파일 ───────────────────────────────────
     function downloadLogs() {
-        const payload = {
-            meta: {
-                exportedAt: new Date().toISOString(),
-                elapsedSec: ((Date.now() - startTime) / 1000).toFixed(2),
-                userAgent: UA,
-                isIOS: IS_IOS,
-                isSafari: IS_SAFARI,
-                isAndroid: IS_ANDROID,
-                screen: { w: window.screen.width, h: window.screen.height, dpr: window.devicePixelRatio },
-            },
-            logs,
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const now = new Date();
+        const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+        const header = [
+            `=== SeeSo Debug Log ===`,
+            `Time   : ${now.toISOString()}`,
+            `Device : ${DEVICE} | Safari=${IS_SAFARI}`,
+            `UA     : ${navigator.userAgent.slice(0, 100)}`,
+            `Screen : ${window.screen.width}x${window.screen.height} dpr=${window.devicePixelRatio}`,
+            `Elapsed: ${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+            `Lines  : ${lines.length}`,
+            `=========================`,
+            '',
+        ].join('\n');
+
+        const blob = new Blob([header + lines.join('\n')], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `seeso-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        a.download = `seeso-log-${ts}.txt`;
         a.click();
         URL.revokeObjectURL(url);
     }
 
-    // DOM 준비되면 패널 초기화
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initPanel);
-    } else {
-        initPanel();
+    // ── UI 패널 (우하단 오버레이) ────────────────────────────────
+    let logListEl = null;
+    let statsEl = null;
+    let minimized = false;
+
+    function initPanel() {
+        if (document.getElementById('ml-panel')) return;
+
+        const panel = document.createElement('div');
+        panel.id = 'ml-panel';
+        Object.assign(panel.style, {
+            position: 'fixed', bottom: '0', right: '0',
+            width: '300px', maxHeight: '35vh',
+            background: 'rgba(8,8,20,0.93)',
+            color: '#ccc', fontFamily: 'monospace', fontSize: '10px',
+            zIndex: '99999', borderRadius: '8px 0 0 0',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column',
+            boxShadow: '0 -2px 16px rgba(0,0,0,0.6)',
+        });
+
+        panel.innerHTML = `
+          <div id="ml-hdr" style="background:#1a1a3a;padding:4px 8px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;cursor:pointer;">
+            <span style="color:#88aaff;font-weight:bold;">📊 Debug</span>
+            <div style="display:flex;gap:6px;">
+              <button onclick="MemoryLogger.downloadLogs()" style="background:#2a2a5a;color:#aaf;border:1px solid #44f;border-radius:3px;padding:1px 6px;cursor:pointer;font-size:10px;">📥 저장</button>
+              <button onclick="MemoryLogger.togglePanel()" id="ml-tog" style="background:#2a2a5a;color:#aaf;border:1px solid #44f;border-radius:3px;padding:1px 6px;cursor:pointer;font-size:10px;">－</button>
+            </div>
+          </div>
+          <div id="ml-stats" style="padding:3px 8px;border-bottom:1px solid #222;flex-shrink:0;line-height:1.5;"></div>
+          <div id="ml-list"  style="overflow-y:auto;flex-grow:1;padding:2px 6px;"></div>
+        `;
+        document.body.appendChild(panel);
+        statsEl = document.getElementById('ml-stats');
+        logListEl = document.getElementById('ml-list');
+        updateStatsPanel();
     }
 
-    // 초기 스냅샷
-    snapshot('APP_START');
-    info('ENV', `Device: ${IS_IOS ? 'iOS' : IS_ANDROID ? 'Android' : 'PC'} | Safari: ${IS_SAFARI}`, { ua: UA.slice(0, 120) });
+    function updateStatsPanel() {
+        if (!statsEl) return;
+        statsEl.innerHTML =
+            `${DEVICE} | ${((Date.now() - startTime) / 1000).toFixed(0)}s | ` +
+            `Hz:<b style="color:#6f6">${gazeHz}</b> | ` +
+            `${memStr()} | lines:${lines.length}`;
+    }
 
-    return { info, warn, error, snapshot, countGaze, downloadLogs, togglePanel, getLogs: () => logs };
+    function updatePanel(level, line) {
+        if (!logListEl || minimized) return;
+        const div = document.createElement('div');
+        const colors = { INFO: '#aad', WARN: '#fd8', 'ERR ': '#f66', SNAP: '#afa' };
+        div.style.color = colors[level] || '#ccc';
+        div.style.borderBottom = '1px solid #1a1a2e';
+        div.style.padding = '0';
+        div.style.whiteSpace = 'pre-wrap';
+        div.style.wordBreak = 'break-all';
+        div.textContent = line;
+        logListEl.appendChild(div);
+        logListEl.scrollTop = logListEl.scrollHeight;
+        // DOM 라인 수 제한
+        while (logListEl.children.length > 150) logListEl.removeChild(logListEl.firstChild);
+        updateStatsPanel();
+    }
+
+    function togglePanel() {
+        minimized = !minimized;
+        const list = document.getElementById('ml-list');
+        const stats = document.getElementById('ml-stats');
+        const btn = document.getElementById('ml-tog');
+        if (list) list.style.display = minimized ? 'none' : '';
+        if (stats) stats.style.display = minimized ? 'none' : '';
+        if (btn) btn.textContent = minimized ? '＋' : '－';
+        const panel = document.getElementById('ml-panel');
+        if (panel) panel.style.maxHeight = minimized ? 'none' : '35vh';
+    }
+
+    // DOM 준비 후 패널 표시
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initPanel);
+    else initPanel();
+
+    // 초기 로그
+    snapshot('APP_START');
+    info('ENV', `${DEVICE} | UA=${navigator.userAgent.slice(0, 80)}`);
+
+    return { info, warn, error, snapshot, countGaze, downloadLogs, togglePanel, getLines: () => lines };
 })();
 
-// 전역 접근 가능하도록
 window.MemoryLogger = MemoryLogger;
