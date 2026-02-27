@@ -107,6 +107,7 @@ class Game {
         // [FIX-iOS] SDK가 생성한 video 요소에 playsinline 강제 주입
         // SeeSo SDK는 내부 video element에 playsinline을 추가하지 않음
         // iOS Safari: playsinline 없으면 fullscreen 시도 → grabFrame → 검은 프레임
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
         if (isIOS) {
             document.querySelectorAll('video').forEach(v => {
                 if (!v.hasAttribute('playsinline')) {
@@ -125,7 +126,7 @@ class Game {
         // [FIX-iOS] 카메라 워밍업 대기
         // iPhone 카메라는 스트림 시작 후 auto-exposure 안정화까지 0.5~1.5초 필요
         // 이 시간 내에 startCalibration하면 SDK가 검은 프레임을 처리 → 캘리브레이션 불량
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        // isIOS는 위(playsinline 주입)에서 이미 선언됨
         if (isIOS) {
             MemoryLogger.info('GAME', '[iOS] 800ms camera warm-up...');
             document.getElementById('status-text').textContent = '📸 카메라 준비 중...';
